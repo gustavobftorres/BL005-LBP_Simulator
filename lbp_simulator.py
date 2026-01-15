@@ -63,6 +63,22 @@ def calculate_token_a_sold(token_b_bought: float, token_a_balance: float, token_
     # Clamp to prevent selling more TKN than available
     return np.clip(token_a_sold, 0, token_a_balance)
 
+def calculate_slippage(
+    price_before: float, 
+    price_after: float
+) -> float:
+    """
+    Calculate slippage as price impact percentage.
+    Slippage = (price_after - price_before) / price_before * 100
+    
+    Returns slippage as a percentage (e.g., 2.5 for 2.5%).
+    Positive values indicate price increase (buying pressure).
+    """
+    if price_before <= 0:
+        return 0.0
+    
+    slippage_pct = ((price_after - price_before) / price_before) * 100.0
+    return slippage_pct
 
 def run_simulation(params: dict) -> pd.DataFrame:
     """
@@ -97,10 +113,11 @@ def run_simulation(params: dict) -> pd.DataFrame:
         token_b_weight = 1.0 - token_a_weight
         
         # Price calculated BEFORE the swap for the current hour
-        current_price = get_spot_price(token_a_balance, token_b_balance, token_a_weight, token_b_weight)
+        price_before_swap = get_spot_price(token_a_balance, token_b_balance, token_a_weight, token_b_weight)
         
         token_a_sold_this_hour = 0.0
         token_b_gained_this_hour = 0.0
+        slippage_pct = 0.0
 
         if i > 0:
             
@@ -121,16 +138,30 @@ def run_simulation(params: dict) -> pd.DataFrame:
             if token_a_sold_this_hour == 0 or token_a_balance - token_a_sold_this_hour < 1e-9:
                 token_a_sold_this_hour = 0
                 token_b_gained_this_hour = 0
+            else:
+                # Calculate price after swap to determine slippage
+                token_a_balance_after = token_a_balance - token_a_sold_this_hour
+                token_b_balance_after = token_b_balance + token_b_gained_this_hour
+                price_after_swap = get_spot_price(
+                    token_a_balance_after, 
+                    token_b_balance_after, 
+                    token_a_weight, 
+                    token_b_weight
+                )
+                
+                # Calculate slippage (price impact)
+                slippage_pct = calculate_slippage(price_before_swap, price_after_swap)
         
         data.append({
             'hour': i,
-            'price': current_price,
+            'price': price_before_swap,
             'token_a_balance': token_a_balance,
             'token_b_balance': token_b_balance,
             'token_a_weight': token_a_weight,
             'token_b_weight': token_b_weight,
             'token_a_sold': token_a_sold_this_hour,
             'token_b_gained': token_b_gained_this_hour,
+            'slippage_pct': slippage_pct,
             'cumulative_proceeds_token_b': cumulative_proceeds_token_b,
             'start_weight': start_weight, 
             'end_weight': end_weight      
