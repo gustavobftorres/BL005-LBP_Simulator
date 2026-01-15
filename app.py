@@ -140,7 +140,7 @@ if 'results_df' in st.session_state:
     token_a_name = st.session_state['token_names']['A']
     token_b_name = st.session_state['token_names']['B']
     
-    tab1, tab2, tab3, tab4 = st.tabs(["Price", "Demand", "Balances", "Raw Data"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Price", "Demand", "Balances", "Slippage", "Raw Data"])
 
     # Extract derived weights from the results (they are constant)
     w_start = results_df['start_weight'].iloc[0]
@@ -168,6 +168,37 @@ if 'results_df' in st.session_state:
         st.line_chart(plot_df_balances[[token_a_name, token_b_name]])
 
     with tab4:
+        st.subheader("Slippage (Price Impact %)")
+        st.caption("Slippage represents the percentage change in price due to each hourly swap.")
+        
+        if 'slippage_pct' in results_df.columns:
+            # Filter out hour 0 (no swap happens at hour 0, so slippage is always 0)
+            slippage_df = results_df[results_df['hour'] > 0].copy()
+            
+            if len(slippage_df) > 0:
+                plot_df_slippage = slippage_df.set_index('hour').rename(
+                    columns={'slippage_pct': 'Slippage (%)'}
+                )
+                st.line_chart(plot_df_slippage['Slippage (%)'])
+                
+                # Display slippage statistics (excluding hour 0)
+                avg_slippage = slippage_df['slippage_pct'].mean()
+                max_slippage = slippage_df['slippage_pct'].max()
+                min_slippage = slippage_df['slippage_pct'].min()
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Average Slippage", f"{avg_slippage:.4f}%")
+                with col2:
+                    st.metric("Max Slippage", f"{max_slippage:.4f}%")
+                with col3:
+                    st.metric("Min Slippage", f"{min_slippage:.4f}%")
+            else:
+                st.info("No slippage data available (only hour 0 in results).")
+        else:
+            st.info("Slippage data not available in results.")
+
+    with tab5:
         st.subheader("Derived Parameters Summary")
         summary_weights = pd.DataFrame([
             {'Parameter': f'{token_a_name} Start Weight', 'Value': f'{w_start*100:,.2f}%'},
@@ -186,6 +217,7 @@ if 'results_df' in st.session_state:
             'token_b_gained':f"Gained {token_b_name} (Hourly)",
             'token_a_weight':f"{token_a_name} Weight",
             'token_b_weight':f"{token_b_name} Weight",
+            'slippage_pct': 'Slippage (%)',
             'cumulative_proceeds_token_b': f"Cumulative Proceeds ({token_b_name})",
         }
         
@@ -195,6 +227,7 @@ if 'results_df' in st.session_state:
         column_order = [
             'Hour', f"{token_a_name} Weight", f"{token_a_name} Balance", 
             f"{token_b_name} Balance", f"Price ({token_b_name})", 
+            'Slippage (%)',
             f"Gained {token_b_name} (Hourly)", f"Sold {token_a_name} (Hourly)", 
             f"Cumulative Proceeds ({token_b_name})"
         ]
