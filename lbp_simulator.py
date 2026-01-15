@@ -84,11 +84,24 @@ def run_simulation(params: dict) -> pd.DataFrame:
     """
     Runs the LBP simulation hour by hour based on constant Token B demand 
     and price-derived weights.
+    
+    Parameters:
+        params: Dictionary containing:
+            - duration_hours: Total hours for simulation
+            - initial_token_a: Initial Token A balance
+            - initial_token_b: Initial Token B balance
+            - start_price: Starting price
+            - end_price: Ending price
+            - demand_per_hour_token_b: Default hourly demand
+            - demand_overrides: Optional dict mapping hour -> demand override value
     """
     
     hours = params['duration_hours']
     token_a_balance = params['initial_token_a']
     token_b_balance = params['initial_token_b']
+    
+    # Get demand overrides (default to empty dict)
+    demand_overrides = params.get('demand_overrides', {})
     
     # 1. Weight Derivation
     start_weight = derive_weight_from_price(
@@ -102,7 +115,7 @@ def run_simulation(params: dict) -> pd.DataFrame:
     weights = np.linspace(start_weight, end_weight, hours + 1)
     
     # 2. Simulation Logic
-    token_b_demand_per_hour = params['demand_per_hour_token_b']
+    default_demand_per_hour = params['demand_per_hour_token_b']
     
     data = [] 
     cumulative_proceeds_token_b = 0.0
@@ -121,9 +134,12 @@ def run_simulation(params: dict) -> pd.DataFrame:
 
         if i > 0:
             
-            # --- Constant Token B Demand Logic ---
-            # 1. Token B bought (Input, fixed demand)
-            token_b_gained_this_hour = token_b_demand_per_hour
+            # --- Demand Logic with Overrides ---
+            # Check if there's an override for this hour, otherwise use default
+            token_b_demand_this_hour = demand_overrides.get(i, default_demand_per_hour)
+            
+            # 1. Token B bought (Input, demand may be overridden)
+            token_b_gained_this_hour = token_b_demand_this_hour
             
             # 2. Token A sold (Output, calculated via Balancer formula)
             token_a_sold_this_hour = calculate_token_a_sold(

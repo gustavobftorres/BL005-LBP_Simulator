@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import lbp_simulator 
 import numpy as np 
+import plotly.graph_objects as go
 
 COMMON_TOKENS = ["TKN", "USDC", "DAI", "USDT", "WETH", "WBTC", "Custom..."]
 
@@ -115,6 +116,61 @@ with st.sidebar.container(border=True):
     demand_per_hour_token_b = demand_per_day_token_b / 24
     st.caption(f"Hourly Demand: **{demand_per_hour_token_b:,.2f} {token_b_name}**")
 
+# --- 4. Demand Overrides (Optional) ---
+with st.sidebar.container(border=True):
+    st.subheader("4. Demand Overrides (Optional)")
+    st.caption("Simulate demand spikes (e.g., whale buys) at specific hours")
+    
+    # Initialize session state for overrides
+    if 'demand_overrides' not in st.session_state:
+        st.session_state['demand_overrides'] = []
+    
+    # Display existing overrides
+    if st.session_state['demand_overrides']:
+        st.write("**Current Overrides:**")
+        for idx, override in enumerate(st.session_state['demand_overrides']):
+            col1, col2, col3 = st.columns([4, 3, 4])
+            with col1:
+                st.caption(f"Hour {override['hour']}: {override['demand']:,.0f} {token_b_name}")
+            with col2:
+                st.caption(f"({override['demand']/demand_per_hour_token_b:.1f}x normal)")
+            with col3:
+                if st.button("Remove", key=f"remove_{idx}", width='stretch'):
+                    st.session_state['demand_overrides'].pop(idx)
+                    st.rerun()
+    
+    # Add new override
+    with st.expander("Add Demand Override"):
+        override_hour = st.number_input(
+            "Hour",
+            min_value=1,
+            max_value=duration_hours,
+            value=1,
+            step=1,
+            help="Hour when the override should take effect (1 = first hour with swaps)"
+        )
+        override_demand = st.number_input(
+            f"Override Demand ({token_b_name})",
+            min_value=0.0,
+            value=demand_per_hour_token_b * 5.0,
+            help=f"Demand for this hour (default: {demand_per_hour_token_b:,.2f} {token_b_name}/hour)"
+        )
+        
+        if st.button("Add Override"):
+            # Check if hour already has an override
+            existing_hour = any(o['hour'] == override_hour for o in st.session_state['demand_overrides'])
+            if existing_hour:
+                st.warning(f"Hour {override_hour} already has an override. Remove it first or update it.")
+            else:
+                st.session_state['demand_overrides'].append({
+                    'hour': override_hour,
+                    'demand': override_demand
+                })
+                st.rerun()
+    
+    if st.button("Clear All Overrides"):
+        st.session_state['demand_overrides'] = []
+        st.rerun()
 
 # --- Run Simulation ---
 simulation_params = {
@@ -124,6 +180,7 @@ simulation_params = {
     'start_price': start_price,
     'end_price': end_price,    
     'demand_per_hour_token_b': demand_per_hour_token_b,
+    'demand_overrides': {o['hour']: o['demand'] for o in st.session_state.get('demand_overrides', [])},
 }
 
 if st.button("Run Simulation"):
@@ -134,11 +191,15 @@ if st.button("Run Simulation"):
     except Exception as e:
         st.error(f"Error running simulation: {e}. Check if initial balances/prices are valid.")
 
+
 # --- Display Results ---
 if 'results_df' in st.session_state:
     results_df = st.session_state['results_df']
     token_a_name = st.session_state['token_names']['A']
     token_b_name = st.session_state['token_names']['B']
+    
+    # Get override hours for indicators
+    override_hours = [o['hour'] for o in st.session_state.get('demand_overrides', [])]
     
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["Price", "Demand", "Balances", "Slippage", "Raw Data"])
 
@@ -148,24 +209,108 @@ if 'results_df' in st.session_state:
 
     with tab1:
         st.subheader(f"Spot Price ({token_b_name} per {token_a_name})")
-        st.line_chart(results_df.set_index('hour')['price'])
+        
+        # Create plotly chart with override indicators
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=results_df['hour'],
+            y=results_df['price'],
+            mode='lines',
+            name='Price',
+            line=dict(color='#1f77b4', width=2)
+        ))
+        
+        # Add vertical lines for override hours
+        for hour in override_hours:
+            if hour <= results_df['hour'].max():
+                fig.add_vline(
+                    x=hour,
+                    line_dash="dash",
+                    line_color="red",
+                    annotation_text=f"Override",
+                    annotation_position="top",
+                    opacity=0.7
+                )
+        
+        fig.update_layout(
+            xaxis_title="Hour",
+            yaxis_title=f"Price ({token_b_name})",
+            hovermode='x unified',
+            height=400
+        )
+        st.plotly_chart(fig, width='stretch')
 
     with tab2:
         st.subheader(f"Hourly Sold ({token_a_name})")
-
-        plot_df_demand = results_df.set_index('hour').rename(
-            columns={'token_a_sold': f"Sold {token_a_name}/Hour"}
+        
+        # Create plotly bar chart with override indicators
+        fig = go.Figure()
+        fig.add_trace(go.Bar(
+            x=results_df['hour'],
+            y=results_df['token_a_sold'],
+            name=f"Sold {token_a_name}/Hour",
+            marker_color='#2ca02c'
+        ))
+        
+        # Add vertical lines for override hours
+        for hour in override_hours:
+            if hour <= results_df['hour'].max():
+                fig.add_vline(
+                    x=hour,
+                    line_dash="dash",
+                    line_color="red",
+                    annotation_text=f"Override",
+                    annotation_position="top",
+                    opacity=0.7
+                )
+        
+        fig.update_layout(
+            xaxis_title="Hour",
+            yaxis_title=f"Sold {token_a_name}",
+            hovermode='x unified',
+            height=400
         )
-        st.bar_chart(plot_df_demand[f"Sold {token_a_name}/Hour"])
+        st.plotly_chart(fig, width='stretch')
 
     with tab3:
         st.subheader("Pool Balances")
-
-        plot_df_balances = results_df.set_index('hour').rename(columns={
-            'token_a_balance': token_a_name,
-            'token_b_balance': token_b_name
-        })
-        st.line_chart(plot_df_balances[[token_a_name, token_b_name]])
+        
+        # Create plotly chart with override indicators
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=results_df['hour'],
+            y=results_df['token_a_weight'],
+            mode='lines',
+            name=token_a_name,
+            line=dict(color='#1f77b4', width=2)
+        ))
+        fig.add_trace(go.Scatter(
+            x=results_df['hour'],
+            y=results_df['token_b_weight'],
+            mode='lines',
+            name=token_b_name,
+            line=dict(color='#ff7f0e', width=2)
+        ))
+        
+        # Add vertical lines for override hours
+        for hour in override_hours:
+            if hour <= results_df['hour'].max():
+                fig.add_vline(
+                    x=hour,
+                    line_dash="dash",
+                    line_color="red",
+                    annotation_text=f"Override",
+                    annotation_position="top",
+                    opacity=0.7
+                )
+        
+        fig.update_layout(
+            xaxis_title="Hour",
+            yaxis_title="Balance",
+            hovermode='x unified',
+            height=400
+        )
+        st.plotly_chart(fig, width='stretch')
 
     with tab4:
         st.subheader("Slippage (Price Impact %)")
@@ -176,10 +321,35 @@ if 'results_df' in st.session_state:
             slippage_df = results_df[results_df['hour'] > 0].copy()
             
             if len(slippage_df) > 0:
-                plot_df_slippage = slippage_df.set_index('hour').rename(
-                    columns={'slippage_pct': 'Slippage (%)'}
+                # Create plotly chart with override indicators
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(
+                    x=slippage_df['hour'],
+                    y=slippage_df['slippage_pct'],
+                    mode='lines',
+                    name='Slippage (%)',
+                    line=dict(color='#9467bd', width=2)
+                ))
+                
+                # Add vertical lines for override hours (only if > 0)
+                for hour in override_hours:
+                    if hour > 0 and hour <= slippage_df['hour'].max():
+                        fig.add_vline(
+                            x=hour,
+                            line_dash="dash",
+                            line_color="red",
+                            annotation_text=f"Override",
+                            annotation_position="top",
+                            opacity=0.7
+                        )
+                
+                fig.update_layout(
+                    xaxis_title="Hour",
+                    yaxis_title="Slippage (%)",
+                    hovermode='x unified',
+                    height=400
                 )
-                st.line_chart(plot_df_slippage['Slippage (%)'])
+                st.plotly_chart(fig, width='stretch')
                 
                 # Display slippage statistics (excluding hour 0)
                 avg_slippage = slippage_df['slippage_pct'].mean()
