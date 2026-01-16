@@ -110,14 +110,31 @@ if pool_info:
         if swaps:
             st.success(f"✅ Found {len(swaps)} swap(s) in the last {time_range[0].lower()}")
             
+            # Create token address to symbol mapping from pool info
+            token_map = {}
+            for token in pool_info.get('tokens', []):
+                token_addr = token.get('address', '').lower()
+                token_symbol = token.get('symbol', 'UNKNOWN')
+                token_map[token_addr] = token_symbol
+            
+            # Helper function to get token symbol
+            def get_token_symbol(address):
+                addr_lower = address.lower()
+                if addr_lower in token_map:
+                    return token_map[addr_lower]
+                # Fallback: return last 6 chars if not found
+                return f"...{address[-6:]}"
+            
             # Process swaps into DataFrame
             swap_data = []
             for s in swaps:
                 swap_data.append({
                     'timestamp': int(s['timestamp']),
                     'datetime': datetime.fromtimestamp(int(s['timestamp'])).strftime('%Y-%m-%d %H:%M:%S'),
-                    'tokenIn': s['tokenIn'][-6:],  # Last 6 chars for brevity
-                    'tokenOut': s['tokenOut'][-6:],
+                    'tokenIn': get_token_symbol(s['tokenIn']),
+                    'tokenOut': get_token_symbol(s['tokenOut']),
+                    'tokenInAddress': s['tokenIn'],  # Keep original for reference
+                    'tokenOutAddress': s['tokenOut'],
                     'amountIn': float(s['tokenAmountIn']),
                     'amountOut': float(s['tokenAmountOut']),
                     'valueUSD': float(s.get('valueUSD', 0)),
@@ -154,27 +171,81 @@ if pool_info:
                 
                 st.markdown("---")
                 
-                # Volume over time chart
-                st.subheader("Swap Volume Over Time")
+                # Bubble timeline chart
+                st.subheader("Swap Timeline (Bubble Chart)")
+                st.caption("Bubble size represents swap value • Color represents token flow direction")
                 
                 # Create time-based aggregation
                 df_sorted = df.sort_values('timestamp')
                 
+                # Create a category for visualization (alternating pattern for better visibility)
+                df_sorted['y_position'] = 1
+                
+                # Normalize bubble sizes (scale to reasonable range)
+                min_val = df_sorted['valueUSD'].min()
+                max_val = df_sorted['valueUSD'].max()
+                
+                # Scale bubble sizes between 10 and 60
+                if max_val > min_val:
+                    df_sorted['bubble_size'] = 10 + (df_sorted['valueUSD'] - min_val) / (max_val - min_val) * 50
+                else:
+                    df_sorted['bubble_size'] = 30
+                
+                # Create color based on token pair (creates visual grouping)
+                df_sorted['token_pair'] = df_sorted['tokenIn'] + '→' + df_sorted['tokenOut']
+                unique_pairs = df_sorted['token_pair'].unique()
+                color_map = {pair: i for i, pair in enumerate(unique_pairs)}
+                df_sorted['color_idx'] = df_sorted['token_pair'].map(color_map)
+                
                 fig = go.Figure()
-                fig.add_trace(go.Scatter(
-                    x=df_sorted['datetime'],
-                    y=df_sorted['valueUSD'],
-                    mode='lines+markers',
-                    name='Swap Value (USD)',
-                    line=dict(color='#1f77b4', width=2),
-                    marker=dict(size=6)
-                ))
+                
+                # Create one trace per token pair for better legend
+                colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', 
+                          '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+                
+                for pair in unique_pairs:
+                    pair_data = df_sorted[df_sorted['token_pair'] == pair]
+                    
+                    fig.add_trace(go.Scatter(
+                        x=pair_data['datetime'],
+                        y=pair_data['y_position'],
+                        mode='markers',
+                        name=pair,
+                        marker=dict(
+                            size=pair_data['bubble_size'],
+                            color=colors[color_map[pair] % len(colors)],
+                            opacity=0.7,
+                            line=dict(width=1, color='white')
+                        ),
+                        text=pair_data.apply(lambda row: 
+                            f"Time: {row['datetime']}<br>" +
+                            f"Value: ${row['valueUSD']:,.2f}<br>" +
+                            f"Flow: {row['token_pair']}<br>" +
+                            f"In: {row['amountIn']:.4f}<br>" +
+                            f"Out: {row['amountOut']:.4f}", 
+                            axis=1
+                        ),
+                        hovertemplate='%{text}<extra></extra>'
+                    ))
                 
                 fig.update_layout(
                     xaxis_title="Time",
-                    yaxis_title="Value (USD)",
-                    hovermode='x unified',
-                    height=400
+                    yaxis=dict(
+                        showticklabels=False,
+                        showgrid=False,
+                        zeroline=False,
+                        range=[0.5, 1.5]
+                    ),
+                    hovermode='closest',
+                    height=300,
+                    showlegend=True,
+                    legend=dict(
+                        orientation="h",
+                        yanchor="bottom",
+                        y=-0.3,
+                        xanchor="center",
+                        x=0.5
+                    )
                 )
                 st.plotly_chart(fig, use_container_width=True)
                 
@@ -249,7 +320,7 @@ if pool_info:
                     token_in_counts = df['tokenIn'].value_counts()
                     
                     fig3 = go.Figure(data=[go.Pie(
-                        labels=[f"...{label}" for label in token_in_counts.index],
+                        labels=token_in_counts.index,
                         values=token_in_counts.values,
                         hole=.3
                     )])
