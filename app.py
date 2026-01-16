@@ -12,7 +12,7 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("LBP Simulator")
+st.title("🔬 LBP Simulator")
 st.sidebar.title("Simulation Setup")
 st.sidebar.markdown("---")
 
